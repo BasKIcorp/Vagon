@@ -2287,184 +2287,248 @@ class SQLiteEditor(QWidget):
         dialog.exec_()
 
     def show_fill_word_dialog(self):
+        print("DEBUG: Метод show_fill_word_dialog вызван")
+        
         if not self.db or not self.db.isOpen():
             QMessageBox.warning(self, "Нет базы данных", "Пожалуйста, сначала откройте или создайте базу данных.")
             return
-
-        template_path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите шаблон Word (.docx)", "", "Word Documents (*.docx)"
-        )
-        if not template_path:
-            return
-
-        output_path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить заполненный документ Word", "", "Word Documents (*.docx)"
-        )
-        if not output_path:
-            return
-        if not output_path.endswith(".docx"):
-            output_path += ".docx"
-
+            
+        # Блокируем кнопку, чтобы предотвратить двойной клик
+        # Отключаем сигнал, чтобы предотвратить повторный вызов
+        self.word_report_btn.setEnabled(False)
+        self.word_report_btn.clicked.disconnect(self.show_fill_word_dialog)
+        
         try:
-            placeholders = extract_placeholders(template_path)
-            if not placeholders:
-                QMessageBox.information(self, "Нет маркеров", "В выбранном шаблоне не найдено маркеров вида [имя_маркера].")
+            template_path, _ = QFileDialog.getOpenFileName(
+                self, "Выберите шаблон Word (.docx)", "", "Word Documents (*.docx)"
+            )
+            print(f"DEBUG: Выбран шаблон: {template_path}")
+            if not template_path:
+                print("DEBUG: Пользователь отменил выбор шаблона")
                 return
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка чтения шаблона", f"Не удалось прочитать маркеры из шаблона: {e}")
-            return
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Заполнение данных для шаблона Word")
-        dialog.setMinimumWidth(500)
-        form_layout = QFormLayout(dialog)
-
-        standard_fields = {
-            "номер_акта": ("Номер акта:", QLineEdit()),
-            "дата_акта": ("Дата акта:", QDateEdit(calendarPopup=True, date=QDate.currentDate())),
-            "объем_ТО": ("Объем ТО:", QLineEdit()),
-            "город": ("Город:", QLineEdit("Санкт-Петербург")),
-        }
-        field_widgets = {}
-        for key, (label_text, widget) in standard_fields.items():
-            form_layout.addRow(label_text, widget)
-            field_widgets[key] = widget
-
-        contract_placeholders = [p for p in placeholders if p.startswith("договор")]
-        wagon_placeholders = [p for p in placeholders if p.startswith("вагон")]
-        service_placeholders = [p for p in placeholders if p.startswith("услуг") or p.startswith("работ")]
-        other_placeholders = [p for p in placeholders if not (p.startswith("договор") or p.startswith("вагон") or p.startswith("услуг") or p.startswith("работ")) and p not in standard_fields]
-
-        if contract_placeholders or service_placeholders:
-            contract_combo = QComboBox()
-            query = QtSql.QSqlQuery(self.db)
-            query.exec_("SELECT id, номер FROM договоры ORDER BY номер")
-            while query.next():
-                contract_combo.addItem(query.value(1), query.value(0))
-            form_layout.addRow("Выберите договор:", contract_combo)
-            field_widgets['договор_combo'] = contract_combo
-
-        if wagon_placeholders:
-            wagon_combo = QComboBox()
-            query = QtSql.QSqlQuery(self.db)
-            query.exec_("SELECT id, номер FROM вагоны ORDER BY номер")
-            while query.next():
-                wagon_combo.addItem(query.value(1), query.value(0))
-            form_layout.addRow("Выберите вагон:", wagon_combo)
-            field_widgets['вагон_combo'] = wagon_combo
-
-        if any(p.startswith("исполнитель") for p in placeholders):
-            worker_combo = QComboBox()
-            query = QtSql.QSqlQuery(self.db)
-            query.exec_("SELECT id, фио FROM исполнители ORDER BY фио")
-            while query.next():
-                worker_combo.addItem(query.value(1), query.value(0))
-            form_layout.addRow("Выберите исполнителя:", worker_combo)
-            field_widgets['исполнитель_combo'] = worker_combo
-            
-        if other_placeholders:
-            form_layout.addRow(QLabel("--- Прочие данные ---"))
-            for placeholder in other_placeholders:
-                # Special handling for signatory fields
-                if placeholder.startswith("подписант"):
-                    if "должность" in placeholder.lower():
-                        continue  # Skip position field
-                    widget = QLineEdit()
-                    form_layout.addRow(f"[{placeholder}]:", widget)
-                    field_widgets[placeholder] = widget
-                else:
-                    widget = QLineEdit()
-                    form_layout.addRow(f"[{placeholder}]:", widget)
-                    field_widgets[placeholder] = widget
-
-        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        form_layout.addRow(button_box)
-
-        if dialog.exec_() == QDialog.Accepted:
-            mapping = {}
-            
-            for key, widget in field_widgets.items():
-                if key in standard_fields:
-                    if isinstance(standard_fields[key][1], QLineEdit):
-                        mapping[key] = widget.text()
-                    elif isinstance(standard_fields[key][1], QDateEdit):
-                        mapping[key] = widget.date().toString("dd.MM.yyyy")
-                elif key not in ['договор_combo', 'вагон_combo', 'исполнитель_combo']:
-                    mapping[key] = widget.text()
-
-            if 'договор_combo' in field_widgets:
-                contract_id = field_widgets['договор_combo'].currentData()
-                contract_number = field_widgets['договор_combo'].currentText()
-                mapping['договоры.номер'] = contract_number
-                query = QtSql.QSqlQuery(self.db)
-                query.prepare("SELECT дата FROM договоры WHERE id = ?")
-                query.addBindValue(contract_id)
-                if query.exec_() and query.next():
-                    mapping['договоры.дата'] = QDate.fromString(query.value(0), "yyyy-MM-dd").toString("dd MMMM yyyy г.")
-                
-                if any(p.startswith("список_работ") or p.startswith("список_услуг") for p in placeholders):
-                    services_query = QtSql.QSqlQuery(self.db)
-                    services_query.prepare("""
-                        SELECT у.наименование 
-                        FROM услуги у 
-                        JOIN договорные_услуги ду ON у.id = ду.id_услуги
-                        WHERE ду.id_договора = ?
-                    """)
-                    services_query.addBindValue(contract_id)
-                    services_list = []
-                    if services_query.exec_():
-                        while services_query.next():
-                            services_list.append(services_query.value(0))
-                    service_list_str = "LIST:" + "|".join(services_list) if services_list else "Нет услуг по договору"
-                    mapping['список_работ'] = service_list_str
-                    mapping['список_услуг'] = service_list_str
-
-            if 'вагон_combo' in field_widgets:
-                wagon_id = field_widgets['вагон_combo'].currentData()
-                wagon_number = field_widgets['вагон_combo'].currentText()
-                mapping['вагоны.номер'] = wagon_number
-                query = QtSql.QSqlQuery(self.db)
-                query.prepare("SELECT собственник, подразделение, дата_ремонта FROM вагоны WHERE id = ?")
-                query.addBindValue(wagon_id)
-                if query.exec_() and query.next():
-                    mapping['вагоны.собственник'] = query.value(0) or ""
-                    mapping['вагоны.подразделение'] = query.value(1) or ""
-                    date_str = query.value(2)
-                    if date_str:
-                        mapping['вагоны.дата_ремонта'] = QDate.fromString(date_str, "yyyy-MM-dd").toString("dd.MM.yyyy")
-                    else:
-                        mapping['вагоны.дата_ремонта'] = ""
-
-            if 'исполнитель_combo' in field_widgets:
-                worker_id = field_widgets['исполнитель_combo'].currentData()
-                worker_fio = field_widgets['исполнитель_combo'].currentText()
-                mapping['исполнители.фио'] = worker_fio
-
-                if 'исполнители.фио' in mapping and mapping['исполнители.фио']:
-                    fio_parts = mapping['исполнители.фио'].split()
-                    if len(fio_parts) >= 1:
-                        mapping['исполнитель_буква'] = fio_parts[0][0].upper() if fio_parts[0] else ""
-                    else:
-                        mapping['исполнитель_буква'] = ""
-
-            print("--- Данные для замены ---")
-            for k, v in mapping.items():
-                print(f"[{k}] -> {v}")
-            print("------------------------")
-            
             try:
-                replace_placeholders(template_path, output_path, mapping)
-                QMessageBox.information(self, "Успех", f"Документ успешно создан:\n{output_path}")
-            except FileNotFoundError as e:
-                QMessageBox.critical(self, "Ошибка", f"Файл не найден: {e}")
-            except PermissionError as e:
-                QMessageBox.critical(self, "Ошибка прав доступа", f"Нет прав на запись файла: {e}")
-            except ValueError as e:
-                QMessageBox.critical(self, "Ошибка", f"{e}")
+                placeholders = extract_placeholders(template_path)
+                print(f"DEBUG: Найдены маркеры: {placeholders}")
+                if not placeholders:
+                    QMessageBox.information(self, "Нет маркеров", "В выбранном шаблоне не найдено маркеров вида [имя_маркера].")
+                    return
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка заполнения", f"Не удалось заполнить шаблон: {e}\n\nПроверьте маркеры в шаблоне и введенные данные.")
+                print(f"DEBUG: Ошибка при извлечении маркеров: {e}")
+                QMessageBox.critical(self, "Ошибка чтения шаблона", f"Не удалось прочитать маркеры из шаблона: {e}")
+                return
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Заполнение данных для шаблона Word")
+            dialog.setMinimumWidth(500)
+            form_layout = QFormLayout(dialog)
+
+            standard_fields = {
+                "номер_акта": ("Номер акта:", QLineEdit()),
+                "дата_акта": ("Дата акта:", QDateEdit(calendarPopup=True, date=QDate.currentDate())),
+                "объем_ТО": ("Объем ТО:", QLineEdit()),
+                "город": ("Город:", QLineEdit("Санкт-Петербург")),
+            }
+            field_widgets = {}
+            for key, (label_text, widget) in standard_fields.items():
+                form_layout.addRow(label_text, widget)
+                field_widgets[key] = widget
+
+            # Отфильтровываем функциональные маркеры из обработки в диалоге
+            contract_placeholders = [p for p in placeholders if p.startswith("договор")]
+            wagon_placeholders = [p for p in placeholders if p.startswith("вагон")]
+            service_placeholders = [p for p in placeholders if p.startswith("услуг") or p.startswith("работ")]
+            
+            # Отфильтровываем функциональные маркеры (содержащие открывающую и закрывающую скобки)
+            regular_placeholders = [p for p in placeholders if not (
+                p.startswith("договор") or 
+                p.startswith("вагон") or 
+                p.startswith("услуг") or 
+                p.startswith("работ") or
+                p in standard_fields or
+                func_pattern.match(p) or  # Проверяем соответствие паттерну функции
+                '(' in p or             # Альтернативная проверка скобок
+                p.startswith("сумма") or  
+                p.startswith("список_")
+            )]
+
+            if contract_placeholders or service_placeholders:
+                contract_combo = QComboBox()
+                query = QtSql.QSqlQuery(self.db)
+                query.exec_("SELECT id, номер FROM договоры ORDER BY номер")
+                while query.next():
+                    contract_combo.addItem(query.value(1), query.value(0))
+                form_layout.addRow("Выберите договор:", contract_combo)
+                field_widgets['договор_combo'] = contract_combo
+
+            if wagon_placeholders:
+                wagon_combo = QComboBox()
+                query = QtSql.QSqlQuery(self.db)
+                query.exec_("SELECT id, номер FROM вагоны ORDER BY номер")
+                while query.next():
+                    wagon_combo.addItem(query.value(1), query.value(0))
+                form_layout.addRow("Выберите вагон:", wagon_combo)
+                field_widgets['вагон_combo'] = wagon_combo
+
+            if any(p.startswith("исполнитель") for p in placeholders):
+                worker_combo = QComboBox()
+                query = QtSql.QSqlQuery(self.db)
+                query.exec_("SELECT id, фио FROM исполнители ORDER BY фио")
+                while query.next():
+                    worker_combo.addItem(query.value(1), query.value(0))
+                form_layout.addRow("Выберите исполнителя:", worker_combo)
+                field_widgets['исполнитель_combo'] = worker_combo
+                
+            # Добавляем форму для обычных переменных, которых нет в БД
+            if regular_placeholders:
+                form_layout.addRow(QLabel("--- Прочие данные ---"))
+                for placeholder in regular_placeholders:
+                    # Проверяем, является ли плейсхолдер функциональным (содержит скобки)
+                    if '(' in placeholder or ')' in placeholder:
+                        continue
+                    
+                    # Специальная обработка полей подписанта
+                    if placeholder.startswith("подписант"):
+                        if "должность" in placeholder.lower():
+                            continue  # Пропускаем поле должности
+                        widget = QLineEdit()
+                        form_layout.addRow(f"[{placeholder}]:", widget)
+                        field_widgets[placeholder] = widget
+                    else:
+                        widget = QLineEdit()
+                        form_layout.addRow(f"[{placeholder}]:", widget)
+                        field_widgets[placeholder] = widget
+
+            button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            form_layout.addRow(button_box)
+
+            if dialog.exec_() == QDialog.Accepted:
+                mapping = {}
+                
+                for key, widget in field_widgets.items():
+                    if key in standard_fields:
+                        if isinstance(standard_fields[key][1], QLineEdit):
+                            mapping[key] = widget.text()
+                        elif isinstance(standard_fields[key][1], QDateEdit):
+                            mapping[key] = widget.date().toString("dd.MM.yyyy")
+                    elif key not in ['договор_combo', 'вагон_combo', 'исполнитель_combo']:
+                        mapping[key] = widget.text()
+
+                if 'договор_combo' in field_widgets:
+                    contract_id = field_widgets['договор_combo'].currentData()
+                    contract_number = field_widgets['договор_combo'].currentText()
+                    mapping['договоры.номер'] = contract_number
+                    query = QtSql.QSqlQuery(self.db)
+                    query.prepare("SELECT дата FROM договоры WHERE id = ?")
+                    query.addBindValue(contract_id)
+                    if query.exec_() and query.next():
+                        mapping['договоры.дата'] = QDate.fromString(query.value(0), "yyyy-MM-dd").toString("dd MMMM yyyy г.")
+                    
+                    if any(p.startswith("список_работ") or p.startswith("список_услуг") for p in placeholders):
+                        services_query = QtSql.QSqlQuery(self.db)
+                        services_query.prepare("""
+                            SELECT у.наименование 
+                            FROM услуги у 
+                            JOIN договорные_услуги ду ON у.id = ду.id_услуги
+                            WHERE ду.id_договора = ?
+                        """)
+                        services_query.addBindValue(contract_id)
+                        services_list = []
+                        if services_query.exec_():
+                            while services_query.next():
+                                services_list.append(services_query.value(0))
+                        service_list_str = "LIST:" + "|".join(services_list) if services_list else "Нет услуг по договору"
+                        
+                        # Добавляем значения для каждого маркера списка работ/услуг с его оригинальным именем
+                        for placeholder in placeholders:
+                            if placeholder.startswith("список_работ") or placeholder.startswith("список_услуг"):
+                                mapping[placeholder] = service_list_str
+                        
+                        # Также добавляем базовые ключи для обратной совместимости
+                        mapping['список_работ'] = service_list_str
+                        mapping['список_услуг'] = service_list_str
+                        
+                        # Рассчитываем сумму стоимости услуг для маркеров вида сумма(...)
+                        sum_query = QtSql.QSqlQuery(self.db)
+                        sum_query.prepare("""
+                            SELECT SUM(у.стоимость_с_ндс)
+                            FROM услуги у 
+                            JOIN договорные_услуги ду ON у.id = ду.id_услуги
+                            WHERE ду.id_договора = ?
+                        """)
+                        sum_query.addBindValue(contract_id)
+                        total_sum = 0
+                        if sum_query.exec_() and sum_query.next():
+                            total_sum = sum_query.value(0) or 0
+                        
+                        # Добавляем переменные для суммы по договору
+                        for placeholder in placeholders:
+                            if placeholder.startswith("сумма"):
+                                mapping[placeholder] = f"{total_sum:.2f} руб."
+
+                if 'вагон_combo' in field_widgets:
+                    wagon_id = field_widgets['вагон_combo'].currentData()
+                    wagon_number = field_widgets['вагон_combo'].currentText()
+                    mapping['вагоны.номер'] = wagon_number
+                    query = QtSql.QSqlQuery(self.db)
+                    query.prepare("SELECT собственник, подразделение, дата_ремонта FROM вагоны WHERE id = ?")
+                    query.addBindValue(wagon_id)
+                    if query.exec_() and query.next():
+                        mapping['вагоны.собственник'] = query.value(0) or ""
+                        mapping['вагоны.подразделение'] = query.value(1) or ""
+                        date_str = query.value(2)
+                        if date_str:
+                            mapping['вагоны.дата_ремонта'] = QDate.fromString(date_str, "yyyy-MM-dd").toString("dd.MM.yyyy")
+                        else:
+                            mapping['вагоны.дата_ремонта'] = ""
+
+                if 'исполнитель_combo' in field_widgets:
+                    worker_id = field_widgets['исполнитель_combo'].currentData()
+                    worker_fio = field_widgets['исполнитель_combo'].currentText()
+                    mapping['исполнители.фио'] = worker_fio
+
+                    if 'исполнители.фио' in mapping and mapping['исполнители.фио']:
+                        fio_parts = mapping['исполнители.фио'].split()
+                        if len(fio_parts) >= 1:
+                            mapping['исполнитель_буква'] = fio_parts[0][0].upper() if fio_parts[0] else ""
+                        else:
+                            mapping['исполнитель_буква'] = ""
+
+                print("--- Данные для замены ---")
+                for k, v in mapping.items():
+                    print(f"[{k}] -> {v}")
+                print("------------------------")
+                
+                # Теперь, после сбора всех данных, запрашиваем путь для сохранения
+                output_path, _ = QFileDialog.getSaveFileName(
+                    self, "Сохранить заполненный документ Word", "", "Word Documents (*.docx)"
+                )
+                print(f"DEBUG: Выбран выходной файл: {output_path}")
+                if not output_path:
+                    print("DEBUG: Пользователь отменил выбор выходного файла")
+                    return
+                if not output_path.endswith(".docx"):
+                    output_path += ".docx"
+                
+                try:
+                    replace_placeholders(template_path, output_path, mapping)
+                    QMessageBox.information(self, "Успех", f"Документ успешно создан:\n{output_path}")
+                except FileNotFoundError as e:
+                    QMessageBox.critical(self, "Ошибка", f"Файл не найден: {e}")
+                except PermissionError as e:
+                    QMessageBox.critical(self, "Ошибка прав доступа", f"Нет прав на запись файла: {e}")
+                except ValueError as e:
+                    QMessageBox.critical(self, "Ошибка", f"{e}")
+                except Exception as e:
+                    QMessageBox.critical(self, "Ошибка заполнения", f"Не удалось заполнить шаблон: {e}\n\nПроверьте маркеры в шаблоне и введенные данные.")
+        
+        finally:
+            # Восстанавливаем нормальное состояние кнопки
+            print("DEBUG: Восстанавливаем состояние кнопки")
+            self.word_report_btn.setEnabled(True)
+            self.word_report_btn.clicked.connect(self.show_fill_word_dialog)
 
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())

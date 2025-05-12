@@ -43,14 +43,83 @@ def _rewrite_paragraphs(
         
         # Проверка на наличие открывающей и закрывающей скобок в параграфе
         if '[' in original and ']' in original:
-            print(f"Обнаружен потенциальный маркер в параграфе: {original}")
+            # Ищем маркеры со значением LIST: в первую очередь
+            list_marker_found = False
+            for marker, value in mapping.items():
+                marker_pattern = re.escape(f"[{marker}]")
+                if re.search(marker_pattern, original) and value.startswith("LIST:") and document:
+                    print(f"Найден LIST маркер: [{marker}], обрабатываем как список...")
+                    match = re.search(marker_pattern, original)
+                    
+                    # Получаем текст до и после маркера
+                    pre_text = original[:match.start()]
+                    post_text = original[match.end():]
+                    
+                    # Получаем родительский элемент и индекс текущего параграфа
+                    parent = paragraph._p.getparent()
+                    idx = parent.index(paragraph._p)
+                    
+                    # Очищаем текущий параграф и добавляем в него текст перед маркером
+                    for run in paragraph.runs[::-1]:
+                        paragraph._p.remove(run._r)
+                    
+                    if pre_text:
+                        paragraph.add_run(pre_text)
+                        # Нужно создать новый параграф для первого элемента списка
+                        next_p = document.add_paragraph()
+                        next_p_element = next_p._p
+                        # Вставляем новый параграф после текущего
+                        parent.insert(idx + 1, next_p_element)
+                        idx += 1  # Обновляем индекс для дальнейшей вставки
+                    else:
+                        # Используем текущий параграф для первого элемента списка
+                        next_p = paragraph
+                    
+                    # Разбиваем список элементов
+                    list_items = value[5:].split('|')  # Удаляем "LIST:" и разбиваем по разделителю
+                    
+                    # Для каждого элемента списка создаем параграф с маркером
+                    for i, item in enumerate(list_items):
+                        if i == 0:
+                            # Первый элемент списка идет в параграф next_p
+                            current_p = next_p
+                        else:
+                            # Создаем новый параграф для следующего элемента списка
+                            current_p = document.add_paragraph()
+                            current_p_element = current_p._p
+                            # Вставляем его после предыдущего
+                            parent.insert(idx + i, current_p_element)
+                        
+                        # Очищаем параграф (на всякий случай)
+                        if current_p.text:
+                            for run in current_p.runs[::-1]:
+                                current_p._p.remove(run._r)
+                        
+                        # Добавляем маркер и текст элемента списка
+                        current_p.add_run("• " + item.strip())
+                        
+                        # Устанавливаем отступ для элементов списка (в EMU - 1/100 точки)
+                        current_p.paragraph_format.left_indent = 720000  # 0.5 дюйма = 720000 EMU
+                    
+                    # Если есть текст после маркера, добавляем его в новый параграф
+                    if post_text:
+                        last_p = document.add_paragraph()
+                        last_p_element = last_p._p
+                        parent.insert(idx + len(list_items), last_p_element)
+                        last_p.add_run(post_text)
+                    
+                    list_marker_found = True
+                    break  # Обрабатываем только первый найденный LIST: маркер
             
-            # Явно проверяем каждый маркер из mapping
+            if list_marker_found:
+                continue  # Переходим к следующему параграфу
+            
+            # Если LIST: маркеров не найдено, выполняем обычную замену
             was_replaced = False
             for marker, value in mapping.items():
                 marker_pattern = re.escape(f"[{marker}]")
                 if re.search(marker_pattern, original):
-                    print(f"Найден маркер: [{marker}], заменяем на: {value}")
+                    print(f"Обычная замена маркера: [{marker}] -> {value}")
                     original = re.sub(marker_pattern, value, original)
                     was_replaced = True
             
@@ -60,70 +129,9 @@ def _rewrite_paragraphs(
                     paragraph._p.remove(run._r)
                 # Добавляем один новый с замененным текстом
                 paragraph.add_run(original)
-                continue  # Переходим к следующему параграфу
-        
-        # Найдем все маркеры в параграфе по регулярному выражению
-        matches = list(pattern.finditer(original))
-        
-        if matches:
-            # Ищем маркеры, которые нужно заменить на список
-            for match in matches:
-                marker = match.group(1)
-                value = mapping.get(marker, "")
-                
-                # Обработка маркированного списка
-                if value.startswith("LIST:") and document:  # Проверяем, что document передан
-                    # Удаляем все старые run'ы
-                    for run in paragraph.runs[::-1]:
-                        paragraph._p.remove(run._r)
-                    
-                    # Получаем текст до и после маркера
-                    pre_text = original[:match.start()]
-                    post_text = original[match.end():]
-                    
-                    # Добавляем текст перед маркером, если он есть
-                    if pre_text:
-                        paragraph.add_run(pre_text)
-                    
-                    # Создаем новый параграф и добавляем в него элементы списка
-                    list_items = value[5:].split('|')  # Удаляем "LIST:" и разбиваем по разделителю
-                    
-                    parent = paragraph._p.getparent()
-                    idx = parent.index(paragraph._p)
-                    
-                    # Добавляем элементы списка как новые параграфы
-                    for i, item in enumerate(list_items):
-                        if i == 0 and not pre_text:  # Используем текущий параграф для первого элемента если перед маркером нет текста
-                            p = paragraph
-                        else:
-                            # Создаем новый параграф после текущего
-                            p = document.add_paragraph()
-                            parent.insert(idx + i, p._p)
-                        
-                        # Добавляем маркер списка вручную вместо применения стиля
-                        p.text = ""  # Очищаем параграф
-                        p.add_run("• " + item.strip())  # Добавляем маркер и текст
-                        
-                        # Делаем отступ для элементов списка
-                        p.paragraph_format.left_indent = 720000  # 0.5 дюйма = 720000 EMUs
-                    
-                    # Добавляем текст после маркера, если он есть
-                    if post_text:
-                        last_p = document.add_paragraph()
-                        parent.insert(idx + len(list_items), last_p._p)
-                        last_p.add_run(post_text)
-                    
-                    return  # Возвращаемся, так как параграф был перестроен
-        
-        # Обычная замена для остальных маркеров
-        replaced = pattern.sub(lambda m: mapping[m.group(1)], original)
-        if replaced != original:  # изменения есть
-            print(f"Замена маркеров выполнена: '{original}' -> '{replaced}'")
-            # удаляем все старые run'ы
-            for run in paragraph.runs[::-1]:
-                paragraph._p.remove(run._r)
-            # добавляем один новый
-            paragraph.add_run(replaced)
+        else:
+            # Если нет маркеров в параграфе, пропускаем его
+            continue
 
 
 def _collect_markers(paragraph):
@@ -259,6 +267,9 @@ def create_test_document(output_path: str) -> None:
     doc.add_paragraph("")
     doc.add_paragraph("Вагон № [вагоны.номер]")
     doc.add_paragraph("Подразделение: [вагоны.подразделение]")
+    doc.add_paragraph("")
+    doc.add_paragraph("Список работ: [список_работ(договоры.номер)]")
+    doc.add_paragraph("Сумма: [сумма(договоры.номер)]")
 
     # таблица
     tbl = doc.add_table(rows=2, cols=2)
@@ -276,20 +287,22 @@ def create_test_document(output_path: str) -> None:
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
 
-    # 1. шаблон
+    # 1. Всегда создаём тестовый шаблон
     template = os.path.join(here, "word.docx")
-    # create_test_document(template)
+    create_test_document(template)
 
-    # 2. маркеры
+    # 2. Ищем маркеры
     vars_found = extract_placeholders(template)
     print("Найдены маркеры:", vars_found)
 
-    # 3. подмена
+    # 3. Подмена маркеров
     mapping_demo = {
         "договоры.номер":       "2024‑000001",
         "договоры.дата":        "23.12.2024",
         "вагоны.номер":         "12345",
         "вагоны.подразделение": "ПМС‑5, Свердловская ж/д",
+        "список_работ(договоры.номер)": "LIST:Работа 1|Ремонт оси|Покраска",
+        "сумма(договоры.номер)": "150000 руб."
     }
     result = os.path.join(here, "result.docx")
     replace_placeholders(template, result, mapping_demo)

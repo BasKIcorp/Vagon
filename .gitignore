@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.env
+
+# Build and distribution
+build/
+dist/
+*.spec
+*.exe
+
+# Database files
+*.db
+*.sqlite3
+
+# Generated documents and reports
+*.docx
+*.xlsx
+*.xls
+*.pdf
+Отчеты/
+Сформированные документы/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/ 

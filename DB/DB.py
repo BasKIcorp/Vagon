@@ -77,8 +77,8 @@ def create_db(db_path: str | Path = "wagons.db") -> None:
         id_договора INTEGER NOT NULL,
         id_услуги   INTEGER NOT NULL,
         id_исполнителя INTEGER NOT NULL,
-        дата_начала DATETIME,                  -- начало интервала
-        дата_окончания DATETIME,               -- конец интервала
+        дата_начала_ DATETIME,                  -- начало интервала
+        дата_окончания_ DATETIME,               -- конец интервала
         подписант   TEXT,                      -- кто подписывает
         FOREIGN KEY (id_вагона) REFERENCES вагоны(id),
         FOREIGN KEY (id_договора) REFERENCES договоры(id),

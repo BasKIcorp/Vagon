@@ -160,7 +160,7 @@ def fill_test_data(db_path="wagons.db"):
         cursor.execute(
             """INSERT INTO выполненные_работы 
             (id_вагона, id_договора, id_услуги, id_исполнителя, 
-             дата_начала, дата_окончания, подписант)
+             дата_начала_, дата_окончания_, подписант)
             VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (wagon_id, contract_id, service_id, worker_id,
              start_time.strftime("%Y-%m-%d %H:%M"),

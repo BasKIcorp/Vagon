@@ -282,7 +282,7 @@ class AddWorkDialog(QDialog):
         query.prepare("""
             INSERT INTO выполненные_работы 
             (id_вагона, id_договора, id_услуги, id_исполнителя, 
-             дата_начала, дата_окончания, подписант)
+             дата_начала_, дата_окончания_, подписант)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """)
         
@@ -415,7 +415,7 @@ class WorkerPaymentDialog(QDialog):
         # Replace QSqlQueryModel with QSqlTableModel to allow editing
         self.work_model = QtSql.QSqlTableModel(self, self.db)
         self.work_model.setTable("выполненные_работы")
-        self.work_model.setFilter(f"id_исполнителя = {worker_id} AND дата_начала BETWEEN '{start_date}' AND '{end_date}'")
+        self.work_model.setFilter(f"id_исполнителя = {worker_id} AND дата_начала_ BETWEEN '{start_date}' AND '{end_date}'")
         self.work_model.setEditStrategy(QtSql.QSqlTableModel.OnFieldChange)
         self.work_model.select()
         
@@ -439,7 +439,7 @@ class WorkerPaymentDialog(QDialog):
             FROM выполненные_работы в
             JOIN услуги у ON в.id_услуги = у.id
             WHERE в.id_исполнителя = ? 
-            AND в.дата_начала BETWEEN ? AND ?
+            AND в.дата_начала_ BETWEEN ? AND ?
         """)
         sum_query.addBindValue(worker_id)
         sum_query.addBindValue(start_date)
@@ -640,7 +640,7 @@ class ExcelReportDialog(QDialog):
                 JOIN вагоны в ON вр.id_вагона = в.id
                 WHERE 
                     вр.id_договора = {contract_id}
-                    AND вр.дата_начала BETWEEN '{report_date_start}' AND '{report_date_end}'
+                    AND вр.дата_начала_ BETWEEN '{report_date_start}' AND '{report_date_end}'
                 ORDER BY 
                     у.наименование, в.номер;
             """
@@ -1908,8 +1908,8 @@ class SQLiteEditor(QWidget):
             self.model.setHeaderData(self.model.fieldIndex("id_договора"), Qt.Horizontal, "Договор")
             self.model.setHeaderData(self.model.fieldIndex("id_услуги"), Qt.Horizontal, "Услуга")
             self.model.setHeaderData(self.model.fieldIndex("id_исполнителя"), Qt.Horizontal, "Исполнитель")
-            self.model.setHeaderData(self.model.fieldIndex("дата_начала"), Qt.Horizontal, "Дата начала")
-            self.model.setHeaderData(self.model.fieldIndex("дата_окончания"), Qt.Horizontal, "Дата окончания")
+            self.model.setHeaderData(self.model.fieldIndex("дата_начала_"), Qt.Horizontal, "Дата начала")
+            self.model.setHeaderData(self.model.fieldIndex("дата_окончания_"), Qt.Horizontal, "Дата окончания")
             self.model.setHeaderData(self.model.fieldIndex("подписант"), Qt.Horizontal, "Подписант")
         elif table_name == "договорные_услуги":
             self.model = QtSql.QSqlRelationalTableModel(self, self.db)
@@ -4041,6 +4041,14 @@ class AddServiceDialog(QDialog):
         else:
             error = query.lastError().text()
             QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении услуги: {error}")
+
+def get_wagon_division_by_number(db, wagon_number):
+    query = QtSql.QSqlQuery(db)
+    query.prepare("SELECT подразделение FROM вагоны WHERE номер = ?")
+    query.addBindValue(wagon_number)
+    if query.exec_() and query.next():
+        return query.value(0)
+    return ""
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
